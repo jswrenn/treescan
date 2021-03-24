@@ -1,56 +1,46 @@
-use walkdir::*;
+use regex::Regex;
+use std::error::Error;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use structopt::StructOpt;
-use regex::Regex;
-use std::path::Path;
-
+use walkdir::WalkDir;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "treescan", about = "Find lines matching a pattern.")]
 struct Opt {
     /// Print lines that match this pattern.
-    pattern: String,
+    pattern: Regex,
     /// Recursively search files in this path.
-    root: PathBuf,
+    path: PathBuf,
 }
 
+fn main() -> Result<(), Box<dyn Error>> {
+    let Opt { pattern, path } = Opt::from_args();
 
-fn search(pattern: &Regex, path: &Path) {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
+    let walker = WalkDir::new(path).into_iter();
 
-    let file = File::open(path).unwrap();
-    let lines = BufReader::new(file).lines();
+    for entry in walker.flatten() {
+        let is_file = entry.metadata().map(|m| m.is_file()).unwrap_or(false);
 
-    for (i, line) in lines.enumerate() {
-      if let Ok(line) = line {
-        if pattern.is_match(&line) {
-            println!("{}:{}\t{}", path.to_string_lossy(), i, line);
+        if !is_file {
+            continue;
         }
-      } else {
-        /* TODO: print a nice error message? */
-      }
+
+        let path = entry.path();
+
+        if let Ok(file) = File::open(path) {
+            let lines = BufReader::new(file).lines();
+
+            for (i, line) in lines.enumerate() {
+                if let Ok(line) = line {
+                    if pattern.is_match(&line) {
+                        println!("{}:{}\t{}", path.display(), i, line);
+                    }
+                }
+            }
+        }
     }
-}
 
-fn is_hidden(entry: &DirEntry) -> bool {
-    entry.file_name()
-         .to_str()
-         .map(|s| s.starts_with("."))
-         .unwrap_or(false)
-}
-
-fn main() {
-    let arguments = Opt::from_args();
-
-    let pattern = Regex::new(&arguments.pattern).unwrap();
-
-    let walker = WalkDir::new(arguments.root).into_iter();
-
-    for entry in walker.filter_entry(|e| !is_hidden(e)).flatten() {
-      let metadata = entry.metadata().unwrap();
-      if metadata.is_file() {
-          search(&pattern, entry.path())
-      }
-    }
+    Ok(())
 }
